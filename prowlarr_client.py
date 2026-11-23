@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from multidict import MultiDict
+
 from .const import PROWLARR_AUDIO_CATEGORIES
 from .http_utils import request_json
 
@@ -88,12 +90,16 @@ class ProwlarrClient:
             "GET",
             self._search_url,
             error_type=ProwlarrError,
-            params={
-                "query": query,
-                "type": "search",
-                "categories": ",".join(categories),
-                "limit": max(1, limit),
-            },
+            # Prowlarr expects the category repeated (categories=3000&categories=3010),
+            # not one comma-separated value, which it rejects with HTTP 400.
+            params=MultiDict(
+                [
+                    ("query", query),
+                    ("type", "search"),
+                    *(("categories", category) for category in categories),
+                    ("limit", str(max(1, limit))),
+                ]
+            ),
             headers={"X-Api-Key": self._api_key, "Accept": "application/json"},
             throttler=self._throttler,
         )

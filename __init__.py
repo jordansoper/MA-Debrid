@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from music_assistant.controllers.cache import use_cache
 from music_assistant.helpers.throttle_retry import Throttler
@@ -67,34 +67,9 @@ class MADebridProvider(MusicProvider):
 
     async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
         """Return the settings of this provider instance."""
+        # The TorBox and Prowlarr credentials are collected by the setup flow
+        # (setup_flow.py) and stored as setup data, so they are not config entries.
         return (
-            ConfigEntry(
-                key=CONF_TORBOX_API_KEY,
-                type=ConfigEntryType.SECURE_STRING,
-                required=True,
-                label="TorBox API key",
-                description=(
-                    "Bearer token from your TorBox account, used for cache checks, "
-                    "torrent adds and download links."
-                ),
-            ),
-            ConfigEntry(
-                key=CONF_PROWLARR_URL,
-                type=ConfigEntryType.STRING,
-                required=True,
-                label="Prowlarr URL",
-                description=(
-                    "Base URL of your Prowlarr instance, reachable from the Music "
-                    "Assistant container (for example http://192.168.1.10:9696)."
-                ),
-            ),
-            ConfigEntry(
-                key=CONF_PROWLARR_API_KEY,
-                type=ConfigEntryType.SECURE_STRING,
-                required=True,
-                label="Prowlarr API key",
-                description="API key from Prowlarr under Settings, General.",
-            ),
             ConfigEntry(
                 key=CONF_PREFERRED_QUALITY,
                 type=ConfigEntryType.STRING,
@@ -113,11 +88,18 @@ class MADebridProvider(MusicProvider):
             ),
         )
 
+    def _setting(self, key: str) -> Any:
+        """Return a setting saved by the setup flow, falling back to the config values."""
+        value = self.get_setup_value(key)
+        if value is None:
+            value = self.config.get_value(key)
+        return value
+
     async def handle_async_init(self) -> None:
         """Validate the settings and create the API clients."""
-        torbox_api_key = str(self.config.get_value(CONF_TORBOX_API_KEY) or "").strip()
-        prowlarr_url = str(self.config.get_value(CONF_PROWLARR_URL) or "").strip()
-        prowlarr_api_key = str(self.config.get_value(CONF_PROWLARR_API_KEY) or "").strip()
+        torbox_api_key = str(self._setting(CONF_TORBOX_API_KEY) or "").strip()
+        prowlarr_url = str(self._setting(CONF_PROWLARR_URL) or "").strip()
+        prowlarr_api_key = str(self._setting(CONF_PROWLARR_API_KEY) or "").strip()
         preferred_quality = str(
             self.config.get_value(CONF_PREFERRED_QUALITY) or DEFAULT_PREFERRED_QUALITY
         ).strip()

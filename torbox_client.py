@@ -103,10 +103,12 @@ class TorBoxClient:
         Add a cached torrent to the TorBox account without starting a download.
 
         :param info_hash: Hexadecimal info hash of the torrent.
-        :param magnet_url: Magnet link of the release, when known.
+        :param magnet_url: Magnet link of the release, when known. Not sent to TorBox: the
+            indexer's own link can carry a display name that TorBox rejects as invalid
+            ("BOZO_TORRENT"), and the info hash alone identifies a cached torrent.
         """
         form = FormData()
-        form.add_field("magnet", magnet_url or f"magnet:?xt=urn:btih:{info_hash}")
+        form.add_field("magnet", f"magnet:?xt=urn:btih:{info_hash}")
         form.add_field("add_only_if_cached", "true")
         payload = await request_json(
             self._session,
