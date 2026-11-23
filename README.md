@@ -31,6 +31,25 @@ straight from a TorBox direct link. Nothing is downloaded to disk first.
 - No extra Python packages: the provider uses only Music Assistant's own HTTP session and
   models.
 
+## Install with the Music Assistant DEV SERVER app (Home Assistant)
+
+The `Music Assistant DEV SERVER` app can load this repository as its provider source, so the
+provider survives restarts and updates. The provider folder is `ma_debrid/` at the top of this
+repository, which is where the dev server looks for it.
+
+1. Install and open **Music Assistant DEV SERVER** from the Music Assistant app repository.
+2. In its configuration set:
+
+   ```yaml
+   provider_repo: jordansoper/MA-Debrid
+   ```
+
+3. Stop the regular Music Assistant app first: both use the same network ports.
+4. Start the dev server, then add **MA Debrid** under **Settings → Music sources**.
+
+The repository is fetched again at every start, so push to `main` (or use `owner/repo@branch`)
+and restart the app to pick up changes. The dev server keeps its own library and settings.
+
 ## Install into a Dockerized Music Assistant
 
 ### The container folder must be named `ma_debrid`
@@ -41,11 +60,11 @@ Music Assistant imports every provider by its manifest `domain`:
 import music_assistant.providers.ma_debrid
 ```
 
-The folder inside the container therefore has to be `ma_debrid`. The folder on your host can
-still be called `MA Debrid`; Docker maps host folder to container folder in the volume line:
+The folder inside the container therefore has to be `ma_debrid`. In this repository that is the
+`ma_debrid/` folder; Docker maps it to the container folder in the volume line:
 
 ```yaml
-- "./MA Debrid:/app/venv/lib/python3.14/site-packages/music_assistant/providers/ma_debrid"
+- "./MA-Debrid/ma_debrid:/app/venv/lib/python3.14/site-packages/music_assistant/providers/ma_debrid"
 ```
 
 A container folder named `MA Debrid` will be ignored, because Python cannot import that name.
@@ -78,7 +97,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/data
-      - "./MA Debrid:/app/venv/lib/python3.14/site-packages/music_assistant/providers/ma_debrid"
+      - "./MA-Debrid/ma_debrid:/app/venv/lib/python3.14/site-packages/music_assistant/providers/ma_debrid"
 ```
 
 The right-hand path must be `<providers-folder>/ma_debrid`; the example shows the common
@@ -92,7 +111,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v "$(pwd)/data:/data" \
-  -v "$(pwd)/MA Debrid:/app/venv/lib/python3.14/site-packages/music_assistant/providers/ma_debrid" \
+  -v "$(pwd)/MA-Debrid/ma_debrid:/app/venv/lib/python3.14/site-packages/music_assistant/providers/ma_debrid" \
   ghcr.io/music-assistant/server:latest
 ```
 
@@ -115,12 +134,16 @@ and update the mount if needed.
 
 ## Configuration
 
-| Setting | Type | Default | Description |
+The three credentials are asked for in the setup form when you add the source. They are checked
+against TorBox and Prowlarr before they are saved, and a wrong key or an unreachable Prowlarr is
+reported under the field it belongs to.
+
+| Setting | Where | Default | Description |
 | --- | --- | --- | --- |
-| TorBox API key | Secure string, required | - | Bearer token used for cache checks, torrent adds and download links. |
-| Prowlarr URL | String, required | - | Base URL reachable **from the container**, e.g. `http://192.168.1.10:9696`. |
-| Prowlarr API key | Secure string, required | - | Found in Prowlarr under Settings → General. |
-| Preferred audio quality | String | `flac` | `flac`, `mp3` or `any`; used to rank cached formats. |
+| TorBox API key | Setup form | - | Bearer token used for cache checks, torrent adds and download links. |
+| Prowlarr URL | Setup form | - | Base URL reachable **from the container**, e.g. `http://192.168.1.10:9696`. |
+| Prowlarr API key | Setup form | - | Found in Prowlarr under Settings → General. |
+| Preferred audio quality | Provider settings | `flac` | `flac`, `mp3` or `any`; used to rank cached formats. |
 
 The Prowlarr URL must be reachable from inside the Music Assistant container. `localhost` there
 points at the container itself, so use the host's LAN address instead.
@@ -141,7 +164,7 @@ python -m venv .venv
 On Linux/macOS use `.venv/bin/python` instead of `.venv/Scripts/python`. Expected result:
 
 ```text
-11 passed
+13 passed
 ```
 
 What is covered:
