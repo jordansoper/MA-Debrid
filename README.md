@@ -12,7 +12,7 @@ straight from a TorBox direct link. Nothing is downloaded to disk first.
    and ISRCs, mapped to Music Assistant `Track` / `Album` models using Deezer ids.
 2. **Track lookup** - Before playback Music Assistant resolves the full track via `/track/{id}`.
 3. **Indexer search** - `get_stream_details` searches Prowlarr's `/api/v1/search` for
-   `"{artist} {title}"`, then falls back to `"{artist} {album}"`, restricted to the Audio
+   `"{artist} {title}"`, then `"{artist} {album}"` and finally the artist alone, restricted to the Audio
    categories `3000`, `3010` and `3040`.
 4. **Cache check** - All found infohashes are checked in one TorBox
    `torrents/checkcached` call with `format=list&list_files=true`.
@@ -164,7 +164,7 @@ python -m venv .venv
 On Linux/macOS use `.venv/bin/python` instead of `.venv/Scripts/python`. Expected result:
 
 ```text
-17 passed
+21 passed
 ```
 
 What is covered:
@@ -219,7 +219,10 @@ reachable from inside Docker (common when `localhost` or `127.0.0.1` was used).
 ## Limitations
 
 - TorBox direct links are time-limited; Music Assistant requests a fresh link for every playback.
-- Every played track is added to the TorBox account (instantly, because it is cached), so torrents
+- If no cached release holds a track, the best seeded release (under 2 GB, preferably FLAC) is
+  downloaded on TorBox and played once it finishes. If it is not done within about 75 seconds,
+  playback fails with "still downloading" and the next attempt finds it cached.
+- Every played track is added to the TorBox account (instantly, when cached), so torrents
   accumulate there. Remove old ones in TorBox if the list grows.
 - Album search returns metadata, but only tracks can be streamed. Playback of an album goes
   through its individual tracks.

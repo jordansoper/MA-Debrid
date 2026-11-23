@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from music_assistant_models.enums import ContentType, MediaType, StreamType
-from music_assistant_models.errors import MediaNotFoundError
+from music_assistant_models.errors import MediaNotFoundError, ResourceTemporarilyUnavailable
 
 from fakes import DEEZER_TRACK, FakeSession
 from ma_debrid.deezer_client import DeezerClient
@@ -79,7 +79,7 @@ MYLIST_RESPONSE = {
 REQUESTDL_RESPONSE = {"success": True, "detail": "Link generated", "data": CDN_URL}
 
 
-def _resolver(session: FakeSession) -> StreamResolver:
+def _resolver(session: FakeSession, **options: object) -> StreamResolver:
     """Return a resolver wired to the fake session."""
     return StreamResolver(
         deezer=DeezerClient(
@@ -95,6 +95,7 @@ def _resolver(session: FakeSession) -> StreamResolver:
         torbox=TorBoxClient(session, "torbox-key"),  # type: ignore[arg-type]
         provider_instance_id="ma_debrid",
         preferred_quality="flac",
+        **options,  # type: ignore[arg-type]
     )
 
 
@@ -169,7 +170,7 @@ async def test_uncached_track_raises_media_not_found() -> None:
     )
 
     with pytest.raises(MediaNotFoundError):
-        await _resolver(session).resolve("3135556")
+        await _resolver(session, download_uncached=False).resolve("3135556")
 
 
 async def test_album_query_is_tried_when_the_track_query_finds_nothing_cached() -> None:
@@ -207,3 +208,124 @@ async def test_album_query_is_tried_when_the_track_query_finds_nothing_cached() 
         if call["url"].endswith("/api/v1/search")
     ]
     assert queries == ["Daft Punk Harder, Better, Faster, Stronger", "Daft Punk Discovery"]
+
+
+def _uncached_session(*, finished: bool) -> FakeSession:
+    """Return a session where nothing is cached and the added torrent downloads."""
+    mylist = {
+        "success": True,
+        "data": [
+            {
+                "id": 42,
+                "hash": INFO_HASH,
+                "name": "Daft Punk - Discovery (2001) [FLAC]",
+                "download_finished": finished,
+                "progress": 1.0 if finished else 0.3,
+                "download_state": "completed" if finished else "downloading",
+                "files": MYLIST_RESPONSE["data"][0]["files"] if finished else [],
+            }
+        ],
+    }
+    return (
+        FakeSession()
+        .route("https://api.deezer.com/track/3135556", DEEZER_TRACK)
+        .route("http://prowlarr.lan:9696/api/v1/search", PROWLARR_RESPONSE)
+        .route(
+            "https://api.torbox.app/v1/api/torrents/checkcached",
+            {"success": True, "data": []},
+        )
+        .route("https://api.torbox.app/v1/api/torrents/createtorrent", CREATE_RESPONSE)
+        .route("https://api.torbox.app/v1/api/torrents/mylist", mylist)
+        .route("https://api.torbox.app/v1/api/torrents/requestdl", REQUESTDL_RESPONSE)
+    )
+
+
+async def test_uncached_release_is_downloaded_then_streamed() -> None:
+    """With nothing cached the best release is added without the cached-only flag."""
+    session = _uncached_session(finished=True)
+
+    details = await _resolver(session).resolve("3135556")
+
+    assert details.path == CDN_URL
+    assert details.data["file_id"] == 7
+    create_call = next(
+        call for call in session.calls if call["url"].endswith("/torrents/createtorrent")
+    )
+    sent = {field[0]["name"]: field[2] for field in create_call["kwargs"]["data"]._fields}
+    assert "add_only_if_cached" not in sent
+    assert sent["magnet"] == f"magnet:?xt=urn:btih:{INFO_HASH}"
+
+
+async def test_unfinished_download_asks_to_try_again() -> None:
+    """A download that is not done in time reports it, so the next try finds it cached."""
+    session = _uncached_session(finished=False)
+
+    with pytest.raises(ResourceTemporarilyUnavailable, match="still downloading"):
+        await _resolver(session, download_wait=0).resolve("3135556")
+
+
+async def test_artist_query_finds_the_song_on_another_release() -> None:
+    """A song missing from its own release is found by searching the artist alone."""
+    other_hash = "e" * 40
+    unrelated = {**PROWLARR_RESPONSE[0], "infoHash": other_hash, "magnetUrl": None}
+
+    def prowlarr(kwargs: dict) -> list[dict]:
+        """Only the artist-only query returns the release that holds the song."""
+        return PROWLARR_RESPONSE if kwargs["params"]["query"] == "Daft Punk" else [unrelated]
+
+    def torbox_cache(kwargs: dict) -> dict:
+        """Only the discography pack is cached."""
+        return CACHED_RESPONSE if INFO_HASH in kwargs["params"]["hash"] else {"data": []}
+
+    session = (
+        FakeSession()
+        .route("https://api.deezer.com/track/3135556", DEEZER_TRACK)
+        .route("http://prowlarr.lan:9696/api/v1/search", prowlarr)
+        .route("https://api.torbox.app/v1/api/torrents/checkcached", torbox_cache)
+        .route("https://api.torbox.app/v1/api/torrents/createtorrent", CREATE_RESPONSE)
+        .route("https://api.torbox.app/v1/api/torrents/mylist", MYLIST_RESPONSE)
+        .route("https://api.torbox.app/v1/api/torrents/requestdl", REQUESTDL_RESPONSE)
+    )
+
+    details = await _resolver(session).resolve("3135556")
+
+    assert details.path == CDN_URL
+
+
+async def test_added_file_is_matched_without_its_folder_prefix() -> None:
+    """TorBox listing a file without the folder checkcached reported must still match."""
+    flat_mylist = {
+        "success": True,
+        "data": [
+            {
+                "id": 42,
+                "hash": INFO_HASH,
+                "name": "Daft Punk - Discovery (2001) [FLAC]",
+                "files": [{"id": 7, "name": TRACK_FILE, "size": TRACK_FILE_SIZE}],
+            }
+        ],
+    }
+    prefixed = {
+        **CACHED_RESPONSE,
+        "data": [
+            {
+                **CACHED_RESPONSE["data"][0],
+                "files": [
+                    {"name": f"Discovery (2001)/{TRACK_FILE}", "size": TRACK_FILE_SIZE},
+                ],
+            }
+        ],
+    }
+    session = (
+        FakeSession()
+        .route("https://api.deezer.com/track/3135556", DEEZER_TRACK)
+        .route("http://prowlarr.lan:9696/api/v1/search", PROWLARR_RESPONSE)
+        .route("https://api.torbox.app/v1/api/torrents/checkcached", prefixed)
+        .route("https://api.torbox.app/v1/api/torrents/createtorrent", CREATE_RESPONSE)
+        .route("https://api.torbox.app/v1/api/torrents/mylist", flat_mylist)
+        .route("https://api.torbox.app/v1/api/torrents/requestdl", REQUESTDL_RESPONSE)
+    )
+
+    details = await _resolver(session).resolve("3135556")
+
+    assert details.data["file_id"] == 7

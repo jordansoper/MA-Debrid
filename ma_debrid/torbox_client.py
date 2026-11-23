@@ -32,6 +32,17 @@ class TorrentFile:
 
 
 @dataclass(frozen=True, slots=True)
+class TorrentStatus:
+    """The files and download state of a torrent on the TorBox account."""
+
+    files: tuple[TorrentFile, ...]
+    finished: bool
+    progress: float
+    name: str = ""
+    state: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class CachedTorrent:
     """A torrent that TorBox confirmed is cached."""
 
@@ -98,18 +109,29 @@ class TorBoxClient:
             cached.update(self._parse_cached(data))
         return cached
 
-    async def add_torrent(self, info_hash: str, magnet_url: str | None = None) -> int:
+    async def add_torrent(
+        self,
+        info_hash: str,
+        magnet_url: str | None = None,
+        *,
+        only_if_cached: bool = True,
+    ) -> int:
         """
-        Add a cached torrent to the TorBox account without starting a download.
+        Add a torrent to the TorBox account.
+
+        A cached torrent is available immediately. An uncached one starts downloading on
+        TorBox when ``only_if_cached`` is False.
 
         :param info_hash: Hexadecimal info hash of the torrent.
         :param magnet_url: Magnet link of the release, when known. Not sent to TorBox: the
             indexer's own link can carry a display name that TorBox rejects as invalid
-            ("BOZO_TORRENT"), and the info hash alone identifies a cached torrent.
+            ("BOZO_TORRENT"), and the info hash alone identifies a torrent.
+        :param only_if_cached: Refuse the torrent instead of downloading it when uncached.
         """
         form = FormData()
         form.add_field("magnet", f"magnet:?xt=urn:btih:{info_hash}")
-        form.add_field("add_only_if_cached", "true")
+        if only_if_cached:
+            form.add_field("add_only_if_cached", "true")
         payload = await request_json(
             self._session,
             "POST",
@@ -137,6 +159,14 @@ class TorBoxClient:
 
         :param torrent_id: TorBox torrent id.
         """
+        return (await self.get_torrent(torrent_id)).files
+
+    async def get_torrent(self, torrent_id: int) -> TorrentStatus:
+        """
+        Return the files and download state of a torrent on the account.
+
+        :param torrent_id: TorBox torrent id.
+        """
         payload = await request_json(
             self._session,
             "GET",
@@ -150,8 +180,19 @@ class TorBoxClient:
         data = payload.get("data")
         torrent = _find_torrent(data, torrent_id)
         if torrent is None:
-            return ()
-        return self._parse_files(torrent.get("files"))
+            return TorrentStatus(files=(), finished=False, progress=0.0)
+        finished = bool(torrent.get("download_finished") or torrent.get("download_present"))
+        try:
+            progress = float(torrent.get("progress") or 0.0)
+        except (TypeError, ValueError):
+            progress = 0.0
+        return TorrentStatus(
+            files=self._parse_files(torrent.get("files")),
+            finished=finished,
+            progress=progress,
+            name=str(torrent.get("name") or ""),
+            state=str(torrent.get("download_state") or ""),
+        )
 
     async def request_download_link(self, torrent_id: int, file_id: int) -> str:
         """

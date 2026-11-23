@@ -295,3 +295,71 @@ def rank_selections(
         reverse=True,
     )
     return selections[:limit]
+
+
+MAX_DOWNLOAD_SIZE = 2 * 1024**3
+_VERSION_SUFFIX = re.compile(
+    r"\s+-\s+.*\b(?:remix|mix|version|edit|remaster(?:ed)?|live|acoustic)\b.*$",
+    re.IGNORECASE,
+)
+
+
+def clean_title(value: str) -> str:
+    """Strip bracketed parts and version suffixes, e.g. ``Sugar (Remix)`` -> ``Sugar``."""
+    cleaned = _BRACKETED.sub(" ", value)
+    cleaned = _VERSION_SUFFIX.sub("", cleaned)
+    return " ".join(cleaned.split())
+
+
+def rank_downloads(
+    releases: Mapping[str, Release],
+    *,
+    artist: str,
+    album: str,
+    title: str,
+    preferred_quality: str,
+    limit: int = 3,
+) -> list[Release]:
+    """
+    Rank uncached releases by how worthwhile they are to download for a track.
+
+    A release must name the artist and either the album or the track, have seeders and
+    stay below ``MAX_DOWNLOAD_SIZE``. Smaller, well seeded, preferred-format releases win.
+
+    :param releases: Prowlarr releases keyed by info hash.
+    :param artist: Artist name of the target track.
+    :param album: Album title of the target track.
+    :param title: Title of the target track.
+    :param preferred_quality: One of the configured quality preferences.
+    :param limit: Maximum number of releases to return.
+    """
+    artist_tokens = set(normalize_text(artist).split())
+    album_tokens = set(normalize_text(clean_title(album)).split())
+    title_tokens = set(normalize_text(clean_title(title)).split())
+
+    ranked: list[tuple[float, Release]] = []
+    for release in releases.values():
+        if release.seeders < 1 or (release.size and release.size > MAX_DOWNLOAD_SIZE):
+            continue
+        tokens = set(normalize_text(release.title).split())
+        if artist_tokens and not artist_tokens <= tokens:
+            continue
+        album_hit = bool(album_tokens) and album_tokens <= tokens
+        title_hit = bool(title_tokens) and title_tokens <= tokens
+        if not (album_hit or title_hit):
+            continue
+
+        score = 0.5 if album_hit else 0.35
+        if title_hit:
+            score += 0.15
+        if preferred_quality == QUALITY_FLAC and "flac" in tokens:
+            score += 0.2
+        elif preferred_quality == QUALITY_MP3 and "mp3" in tokens:
+            score += 0.2
+        score += min(release.seeders, 50) / 50 * 0.15
+        if release.size:
+            score -= release.size / MAX_DOWNLOAD_SIZE * 0.1
+        ranked.append((score, release))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [release for _, release in ranked[:limit]]
