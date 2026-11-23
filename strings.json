@@ -1,0 +1,33 @@
+{
+  "config_entries": {
+    "torbox_api_key": {
+      "label": "TorBox API key",
+      "description": "Bearer token from your TorBox account. Used to check caches, add torrents and request direct download links."
+    },
+    "prowlarr_url": {
+      "label": "Prowlarr URL",
+      "description": "Base URL of your Prowlarr instance, reachable from the Music Assistant container, for example http://192.168.1.10:9696."
+    },
+    "prowlarr_api_key": {
+      "label": "Prowlarr API key",
+      "description": "API key from Prowlarr under Settings, General."
+    },
+    "preferred_quality": {
+      "label": "Preferred audio quality",
+      "description": "Which cached format is preferred when a release exists in several formats. Tracks are matched by title and track number either way.",
+      "options": {
+        "flac": "FLAC / lossless",
+        "mp3": "MP3",
+        "any": "Any audio format"
+      }
+    }
+  },
+  "config_categories": {
+    "torbox": {
+      "label": "TorBox"
+    },
+    "prowlarr": {
+      "label": "Prowlarr"
+    }
+  }
+}

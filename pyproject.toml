@@ -1,0 +1,23 @@
+[project]
+name = "ma-debrid"
+version = "0.1.0"
+description = "A Music Assistant provider that streams cached TorBox releases found through Prowlarr."
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "aiohttp",
+  "music-assistant-models",
+  "pytest",
+  "pytest-asyncio",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+# the project root is a package (the provider's __init__.py): import test modules by path
+# so pytest never imports the provider's server-only entry point
+addopts = "--import-mode=importlib"
+pythonpath = ["tests"]

@@ -1,0 +1,11 @@
+{
+  "type": "music",
+  "domain": "ma_debrid",
+  "stage": "beta",
+  "name": "MA Debrid",
+  "description": "Search Deezer metadata and stream cached TorBox torrents found through Prowlarr.",
+  "codeowners": ["@your-github-handle"],
+  "provides": ["album", "track"],
+  "requirements": [],
+  "multi_instance": true
+}

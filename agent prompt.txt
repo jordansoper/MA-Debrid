@@ -1,0 +1,42 @@
+Build a custom Music Assistant `MusicProvider` plugin named `MA Debrid` that replicates the on-demand search, debrid cache resolution, and direct streaming workflow of the Eclipse Android app.
+
+### 1. Project Structure & Target Environment
+- **Base Architecture:** Scaffold the plugin following the official `music-assistant/community-provider-template` structure (`manifest.json`, `__init__.py`, and supporting modules using modern async Python 3.12+ with full type annotations).
+- **Deployment Target:** Local bind-mount into a Dockerized Music Assistant server (`music_assistant/providers/MA Debrid`), so ensure there are no broken relative imports or packaging dependencies required at runtime.
+
+### 2. Provider Configuration (`get_config_entries`)
+Expose the following settings in the Music Assistant UI:
+- `torbox_api_key` (ConfigEntryType.SECURE_STRING, required): TorBox API bearer token.
+- `prowlarr_url` (ConfigEntryType.STRING, required): Base URL for the local Prowlarr instance (e.g., `http://192.168.1.x:9696`).
+- `prowlarr_api_key` (ConfigEntryType.SECURE_STRING, required): Prowlarr API key.
+- `preferred_quality` (ConfigEntryType.STRING, default `"flac"`, options: `["flac", "mp3", "any"]`): Audio format preference when ranking releases.
+
+### 3. Supported Features & Core Methods
+Declare `ProviderFeature.SEARCH` and implement the following async methods using `self.mass.http_session`:
+
+1. **`search(search_query: str, media_types: list[MediaType], limit: int) -> SearchResults`**
+   - Query the public Deezer Search API (`https://api.deezer.com/search/track` and `/search/album`) to retrieve accurate track metadata, album art, artist info, ISRC, and durations.
+   - Map results cleanly into `music_assistant_models.media_items.Track` and `Album` objects using Deezer IDs as `item_id`s.
+   - Decorate with `@use_cache` to respect external API limits.
+
+2. **`get_track(prov_track_id: str) -> Track` & `get_album(prov_album_id: str) -> Album`**
+   - Fetch full metadata for a given Deezer ID from `https://api.deezer.com/track/{id}` or `/album/{id}` so Music Assistant can resolve track details prior to playback.
+
+3. **`get_stream_details(item_id: str, media_type: MediaType) -> StreamDetails`**
+   - Resolve the track metadata (`artist`, `title`, `album`, `track_number`, `duration`) via `get_track(item_id)`.
+   - **Step A — Indexer Search:** Query Prowlarr's Torznab API (`{prowlarr_url}/api/v1/search`) using queries for `"{artist} {title}"` and fallback `"{artist} {album}"` in Audio categories (`3000`, `3010`, `3040`). Extract magnets and infohashes.
+   - **Step B — Cache Check:** Filter extracted infohashes against TorBox's cache endpoint (`GET https://api.torbox.app/v1/api/torrents/checkcached?hash={hashes}&format=list&list_files=true`) with `Authorization: Bearer {torbox_api_key}`.
+   - **Step C — File Matching & Ranking:** Rank cached torrents by `preferred_quality` (`flac` > `mp3`), avoiding `.cue`/`.log`/sample files. Inside `list_files`, fuzzy-match the specific audio file matching the target track title and/or track number (so full-album packs resolve to the exact single track).
+   - **Step D — Add & Resolve Direct Link:**
+     - Call `POST https://api.torbox.app/v1/api/torrents/createtorrent` with `magnet` (or hash) and `add_only_if_cached=true` to add it to the user's TorBox account instantly and obtain `torrent_id`.
+     - Call `GET https://api.torbox.app/v1/api/torrents/requestdl?token={torbox_api_key}&torrent_id={torrent_id}&file_id={file_id}&zip_link=false` to get the direct CDN URL.
+   - **Step E — Return Stream:** Return `StreamDetails(provider=self.instance_id, item_id=item_id, audio_format=AudioFormat(content_type=ContentType.try_parse(ext)), stream_type=StreamType.HTTP, path=cdn_url)`.
+   - Raise `MediaNotFoundError` if no cached release or matching track file is found.
+
+### 4. Deliverables & Verification
+- Generate all required files (`manifest.json`, `__init__.py`, `torbox_client.py`, `prowlarr_client.py`, and `README.md` with Docker volume mount instructions).
+- Include clean error handling, structured logging (`self.logger`), and async `Throttler` rate-limiting for Deezer and TorBox endpoints.
+- Write a standalone async `pytest` test suite (with mocked HTTP responses) verifying:
+  1. Deezer metadata parsing into Music Assistant `Track` models.
+  2. Multi-track album pack file matching inside TorBox `checkcached` responses.
+  3. End-to-end `get_stream_details` resolution returning a valid `StreamDetails` object.
