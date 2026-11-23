@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 DEEZER_TRACK = {
@@ -61,11 +62,19 @@ class FakeSession:
     def __init__(self) -> None:
         """Start without routes or recorded calls."""
         self.calls: list[dict[str, Any]] = []
-        self._routes: list[tuple[str, FakeResponse]] = []
+        self._routes: list[tuple[str, FakeResponse | Callable[[dict[str, Any]], Any]]] = []
 
     def route(self, fragment: str, payload: Any, status: int = 200) -> FakeSession:
-        """Answer any request whose URL contains the fragment with the payload."""
-        self._routes.append((fragment, FakeResponse(payload, status)))
+        """
+        Answer any request whose URL contains the fragment with the payload.
+
+        A callable payload receives the request's keyword arguments and returns the payload,
+        so one route can answer differently per request (for example per query parameter).
+        """
+        if callable(payload):
+            self._routes.append((fragment, payload))
+        else:
+            self._routes.append((fragment, FakeResponse(payload, status)))
         return self
 
     def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
@@ -73,6 +82,8 @@ class FakeSession:
         self.calls.append({"method": method, "url": url, "kwargs": kwargs})
         for fragment, response in self._routes:
             if fragment in str(url):
+                if callable(response):
+                    return FakeResponse(response(kwargs))
                 return response
         raise AssertionError(f"Unexpected request: {method} {url}")
 

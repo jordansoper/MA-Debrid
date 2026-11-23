@@ -170,3 +170,40 @@ async def test_uncached_track_raises_media_not_found() -> None:
 
     with pytest.raises(MediaNotFoundError):
         await _resolver(session).resolve("3135556")
+
+
+async def test_album_query_is_tried_when_the_track_query_finds_nothing_cached() -> None:
+    """A first search full of uncached releases must not stop the album search."""
+    other_hash = "f" * 40
+    other_release = {**PROWLARR_RESPONSE[0], "infoHash": other_hash, "magnetUrl": None}
+
+    def prowlarr(kwargs: dict) -> list[dict]:
+        """Answer the track query with an uncached release, the album query with the pack."""
+        query = kwargs["params"]["query"]
+        return PROWLARR_RESPONSE if query == "Daft Punk Discovery" else [other_release]
+
+    def torbox_cache(kwargs: dict) -> dict:
+        """Only the album pack is cached on TorBox."""
+        if INFO_HASH in kwargs["params"]["hash"]:
+            return CACHED_RESPONSE
+        return {"success": True, "data": []}
+
+    session = (
+        FakeSession()
+        .route("https://api.deezer.com/track/3135556", DEEZER_TRACK)
+        .route("http://prowlarr.lan:9696/api/v1/search", prowlarr)
+        .route("https://api.torbox.app/v1/api/torrents/checkcached", torbox_cache)
+        .route("https://api.torbox.app/v1/api/torrents/createtorrent", CREATE_RESPONSE)
+        .route("https://api.torbox.app/v1/api/torrents/mylist", MYLIST_RESPONSE)
+        .route("https://api.torbox.app/v1/api/torrents/requestdl", REQUESTDL_RESPONSE)
+    )
+
+    details = await _resolver(session).resolve("3135556")
+
+    assert details.path == CDN_URL
+    queries = [
+        call["kwargs"]["params"]["query"]
+        for call in session.calls
+        if call["url"].endswith("/api/v1/search")
+    ]
+    assert queries == ["Daft Punk Harder, Better, Faster, Stronger", "Daft Punk Discovery"]

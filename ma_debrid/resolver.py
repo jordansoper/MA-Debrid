@@ -71,29 +71,7 @@ class StreamResolver:
         artist_name = track.artists[0].name if track.artists else ""
         album_title = track.album.name if track.album is not None else ""
 
-        releases = await self._search_releases(artist_name, track.name, album_title)
-        if not releases:
-            raise MediaNotFoundError(f"No release found for {artist_name} - {track.name}")
-
-        release_by_hash = {release.info_hash: release for release in releases}
-        try:
-            cached = await self._torbox.check_cached(list(release_by_hash))
-        except TorBoxError as err:
-            raise ResourceTemporarilyUnavailable(f"TorBox cache check failed: {err}") from err
-
-        selections = rank_selections(
-            cached,
-            release_by_hash,
-            title=track.name,
-            track_number=track.track_number,
-            album_title=album_title,
-            preferred_quality=self._preferred_quality,
-        )
-        if not selections:
-            raise MediaNotFoundError(
-                f"No cached release contains a matching file for "
-                f"{artist_name} - {track.name}"
-            )
+        selections = await self._find_selections(track, artist_name, album_title)
 
         failures: list[str] = []
         for selection in selections[:MAX_ADD_ATTEMPTS]:
@@ -113,15 +91,24 @@ class StreamResolver:
             + (f": {failures[-1]}" if failures else "")
         )
 
-    async def _search_releases(
-        self, artist_name: str, track_title: str, album_title: str
-    ) -> list[Release]:
-        """Search Prowlarr for the track, then for its album."""
-        queries = [" ".join(part for part in (artist_name, track_title) if part)]
+    async def _find_selections(
+        self, track: Track, artist_name: str, album_title: str
+    ) -> list[FileSelection]:
+        """
+        Search Prowlarr and return the cached files that match the track, best first.
+
+        The track query is tried first, then the album query: a search for a track title
+        often returns many unrelated releases, so the album query is also used when the
+        first batch has nothing cached on TorBox.
+
+        :raises MediaNotFoundError: No release was found, or none cached holds the track.
+        :raises ResourceTemporarilyUnavailable: Prowlarr or TorBox could not be used.
+        """
+        queries = [" ".join(part for part in (artist_name, track.name) if part)]
         if album_title:
             queries.append(" ".join(part for part in (artist_name, album_title) if part))
 
-        releases: dict[str, Release] = {}
+        release_by_hash: dict[str, Release] = {}
         errors: list[str] = []
         for query in queries:
             if not query:
@@ -130,16 +117,53 @@ class StreamResolver:
                 found = await self._prowlarr.search(query, limit=MAX_RELEASES)
             except ProwlarrError as err:
                 errors.append(str(err))
-                self._logger.debug("MA Debrid Prowlarr search for %r failed: %s", query, err)
+                self._logger.warning("MA Debrid Prowlarr search for %r failed: %s", query, err)
                 continue
-            for release in found:
-                releases.setdefault(release.info_hash, release)
-            if releases:
-                break
+            new_releases = {
+                release.info_hash: release
+                for release in found
+                if release.info_hash not in release_by_hash
+            }
+            self._logger.info(
+                "MA Debrid: Prowlarr found %d releases for %r (%d new)",
+                len(found),
+                query,
+                len(new_releases),
+            )
+            if not new_releases:
+                continue
+            release_by_hash.update(new_releases)
 
-        if not releases and errors:
+            try:
+                cached = await self._torbox.check_cached(list(new_releases))
+            except TorBoxError as err:
+                raise ResourceTemporarilyUnavailable(
+                    f"TorBox cache check failed: {err}"
+                ) from err
+            selections = rank_selections(
+                cached,
+                release_by_hash,
+                title=track.name,
+                track_number=track.track_number,
+                album_title=album_title,
+                preferred_quality=self._preferred_quality,
+            )
+            self._logger.info(
+                "MA Debrid: %d of %d releases are cached on TorBox, %d with a matching file",
+                len(cached),
+                len(new_releases),
+                len(selections),
+            )
+            if selections:
+                return selections
+
+        if not release_by_hash and errors:
             raise ResourceTemporarilyUnavailable(f"Prowlarr search failed: {errors[-1]}")
-        return list(releases.values())
+        if not release_by_hash:
+            raise MediaNotFoundError(f"No release found for {artist_name} - {track.name}")
+        raise MediaNotFoundError(
+            f"No cached release contains a matching file for {artist_name} - {track.name}"
+        )
 
     async def _resolve_selection(
         self, selection: FileSelection, track: Track

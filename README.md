@@ -164,7 +164,7 @@ python -m venv .venv
 On Linux/macOS use `.venv/bin/python` instead of `.venv/Scripts/python`. Expected result:
 
 ```text
-16 passed
+17 passed
 ```
 
 What is covered:
