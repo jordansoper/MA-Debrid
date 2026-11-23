@@ -10,7 +10,7 @@ from music_assistant.models.music_provider import MusicProvider
 from music_assistant_models.config_entries import ConfigEntry, ConfigValueOption
 from music_assistant_models.enums import ConfigEntryType, MediaType, ProviderFeature
 from music_assistant_models.errors import SetupFailedError, UnsupportedFeaturedException
-from music_assistant_models.media_items import Album, SearchResults, Track
+from music_assistant_models.media_items import Album, Artist, SearchResults, Track
 from music_assistant_models.streamdetails import StreamDetails
 
 from .const import (
@@ -39,7 +39,11 @@ if TYPE_CHECKING:
     from music_assistant_models.config_entries import ProviderConfig
     from music_assistant_models.provider import ProviderManifest
 
-SUPPORTED_FEATURES = {ProviderFeature.SEARCH}
+SUPPORTED_FEATURES = {
+    ProviderFeature.SEARCH,
+    ProviderFeature.ARTIST_ALBUMS,
+    ProviderFeature.ARTIST_TOPTRACKS,
+}
 
 
 async def setup(
@@ -190,6 +194,42 @@ class MADebridProvider(MusicProvider):
         :param prov_album_id: Deezer album id.
         """
         return await self._deezer.get_album(prov_album_id)
+
+    @use_cache(expiration=CACHE_TTL_ITEM)
+    async def get_album_tracks(self, prov_album_id: str) -> list[Track]:
+        """
+        Return the tracks of a Deezer album, so a whole album can be played.
+
+        :param prov_album_id: Deezer album id.
+        """
+        return await self._deezer.get_album_tracks(prov_album_id)
+
+    @use_cache(expiration=CACHE_TTL_ITEM)
+    async def get_artist(self, prov_artist_id: str) -> Artist:
+        """
+        Return the Deezer metadata of an artist.
+
+        :param prov_artist_id: Deezer artist id.
+        """
+        return await self._deezer.get_artist(prov_artist_id)
+
+    @use_cache(expiration=CACHE_TTL_ITEM)
+    async def get_artist_albums(self, prov_artist_id: str) -> list[Album]:
+        """
+        Return the albums of a Deezer artist.
+
+        :param prov_artist_id: Deezer artist id.
+        """
+        return await self._deezer.get_artist_albums(prov_artist_id)
+
+    @use_cache(expiration=CACHE_TTL_ITEM)
+    async def get_artist_toptracks(self, prov_artist_id: str) -> list[Track]:
+        """
+        Return the most popular tracks of a Deezer artist.
+
+        :param prov_artist_id: Deezer artist id.
+        """
+        return await self._deezer.get_artist_toptracks(prov_artist_id)
 
     async def get_stream_details(self, item_id: str, media_type: MediaType) -> StreamDetails:
         """

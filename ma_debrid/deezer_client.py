@@ -106,6 +106,60 @@ class DeezerClient:
         payload = await self._get(f"/album/{quote(str(prov_album_id), safe='')}")
         return self.parse_album(payload, fallback_id=str(prov_album_id))
 
+    async def get_album_tracks(self, prov_album_id: str) -> list[Track]:
+        """
+        Return the tracks of a Deezer album, in album order.
+
+        :param prov_album_id: Deezer album id.
+        """
+        album_id = quote(str(prov_album_id), safe="")
+        album_payload = await self._get(f"/album/{album_id}")
+        tracks_payload = await self._get(
+            f"/album/{album_id}/tracks", params={"limit": DEEZER_MAX_LIMIT}
+        )
+        tracks: list[Track] = []
+        for position, item in enumerate(_data_items(tracks_payload), start=1):
+            # the album track list carries no album of its own: reuse the album payload
+            merged = {"track_position": position, **item, "album": album_payload}
+            tracks.append(self.parse_track(merged))
+        return tracks
+
+    async def get_artist(self, prov_artist_id: str) -> Artist:
+        """
+        Return the Deezer metadata of an artist.
+
+        :param prov_artist_id: Deezer artist id.
+        """
+        payload = await self._get(f"/artist/{quote(str(prov_artist_id), safe='')}")
+        artist = self._parse_artist(payload) if isinstance(payload, Mapping) else None
+        if artist is None:
+            raise MediaNotFoundError(f"Deezer has no artist {prov_artist_id}")
+        return artist
+
+    async def get_artist_albums(self, prov_artist_id: str) -> list[Album]:
+        """
+        Return the albums of a Deezer artist.
+
+        :param prov_artist_id: Deezer artist id.
+        """
+        payload = await self._get(
+            f"/artist/{quote(str(prov_artist_id), safe='')}/albums",
+            params={"limit": DEEZER_MAX_LIMIT},
+        )
+        return [self.parse_album(item) for item in _data_items(payload)]
+
+    async def get_artist_toptracks(self, prov_artist_id: str) -> list[Track]:
+        """
+        Return the most popular tracks of a Deezer artist.
+
+        :param prov_artist_id: Deezer artist id.
+        """
+        payload = await self._get(
+            f"/artist/{quote(str(prov_artist_id), safe='')}/top",
+            params={"limit": 50},
+        )
+        return [self.parse_track(item) for item in _data_items(payload)]
+
     def parse_track(self, item: Mapping[str, Any], *, fallback_id: str | None = None) -> Track:
         """
         Map a Deezer track payload to a Music Assistant track.
