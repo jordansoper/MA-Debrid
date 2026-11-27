@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ma_debrid.matching import rank_selections, score_file
+from ma_debrid.matching import rank_downloads, rank_selections, score_file
 from ma_debrid.prowlarr_client import Release
 from ma_debrid.torbox_client import CachedTorrent, TorrentFile
 
@@ -136,3 +136,50 @@ def test_torrent_without_file_list_is_skipped() -> None:
     )
 
     assert selections == []
+
+
+def test_lossless_file_beats_lossy_file_with_a_slightly_better_title() -> None:
+    """A FLAC wins over an MP3 whose title matches a little better when FLAC is preferred."""
+    flac = score_file(
+        TorrentFile(name="03 - Harder Better Faster Stronger.flac", size=30_000_000, file_id=1),
+        title=TITLE,
+        track_number=3,
+        preferred_quality="flac",
+    )
+    mp3 = score_file(
+        TorrentFile(name=MP3_FILE, size=8_000_000, file_id=2),
+        title=TITLE,
+        track_number=3,
+        preferred_quality="flac",
+    )
+    assert flac is not None
+    assert mp3 is not None
+    assert flac > mp3
+
+
+def test_rank_downloads_prefers_lossless_over_small_low_bitrate_release() -> None:
+    """The size of a release no longer favours a small 128 kbps MP3 over a FLAC release."""
+    mp3_release = Release(
+        title="Daft Punk - Discovery MP3 128kbps",
+        info_hash="a" * 40,
+        magnet_url=None,
+        size=90_000_000,
+        seeders=40,
+        indexer="Test Indexer",
+    )
+    flac_release = Release(
+        title="Daft Punk - Discovery (2001) [FLAC]",
+        info_hash="b" * 40,
+        magnet_url=None,
+        size=420_000_000,
+        seeders=15,
+        indexer="Test Indexer",
+    )
+    ranked = rank_downloads(
+        {mp3_release.info_hash: mp3_release, flac_release.info_hash: flac_release},
+        artist="Daft Punk",
+        album="Discovery",
+        title=TITLE,
+        preferred_quality="flac",
+    )
+    assert ranked[0] is flac_release

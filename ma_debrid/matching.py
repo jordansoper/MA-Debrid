@@ -157,7 +157,7 @@ def quality_score(extension: str, preferred_quality: str) -> float:
     lossless = extension in LOSSLESS_EXTENSIONS
     is_mp3 = extension == ".mp3"
     if preferred_quality == QUALITY_FLAC:
-        return 1.0 if lossless else 0.65 if is_mp3 else 0.4
+        return 1.0 if lossless else 0.4 if is_mp3 else 0.2
     if preferred_quality == QUALITY_MP3:
         return 1.0 if is_mp3 else 0.8 if lossless else 0.4
     return 1.0 if lossless else 0.95 if is_mp3 else 0.6
@@ -197,8 +197,10 @@ def score_file(
     number_match = track_number > 0 and file_number == track_number
     number_conflict = track_number > 0 and file_number is not None and not number_match
 
-    score = title_similarity * 0.6
-    score += quality_score(extension, preferred_quality) * 0.25
+    # quality carries enough weight that a lossless file beats a lossy one with a slightly
+    # better title match (a title gap of about 0.4 is needed to flip it)
+    score = title_similarity * 0.5
+    score += quality_score(extension, preferred_quality) * 0.35
     if number_match:
         score += 0.15
     elif number_conflict:
@@ -298,6 +300,8 @@ def rank_selections(
 
 
 MAX_DOWNLOAD_SIZE = 2 * 1024**3
+_LOSSLESS_TOKENS = frozenset({"flac", "lossless", "alac", "wav", "24bit"})
+_LOW_BITRATE_TOKENS = frozenset({"64kbps", "96kbps", "112kbps", "128kbps", "128k", "128"})
 _VERSION_SUFFIX = re.compile(
     r"\s+-\s+.*\b(?:remix|mix|version|edit|remaster(?:ed)?|live|acoustic)\b.*$",
     re.IGNORECASE,
@@ -352,13 +356,15 @@ def rank_downloads(
         score = 0.5 if album_hit else 0.35
         if title_hit:
             score += 0.15
-        if preferred_quality == QUALITY_FLAC and "flac" in tokens:
-            score += 0.2
+        if preferred_quality == QUALITY_FLAC and tokens & _LOSSLESS_TOKENS:
+            score += 0.4
         elif preferred_quality == QUALITY_MP3 and "mp3" in tokens:
             score += 0.2
+        if preferred_quality != QUALITY_MP3 and tokens & _LOW_BITRATE_TOKENS:
+            score -= 0.3
         score += min(release.seeders, 50) / 50 * 0.15
-        if release.size:
-            score -= release.size / MAX_DOWNLOAD_SIZE * 0.1
+        # the size cap above already keeps downloads reasonable: a larger release is usually
+        # lossless, so size is not held against it any more
         ranked.append((score, release))
 
     ranked.sort(key=lambda item: item[0], reverse=True)
